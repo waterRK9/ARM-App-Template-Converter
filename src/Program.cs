@@ -1,14 +1,21 @@
 ﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
+
+// References:
+//      Classic:https://learn.microsoft.com/en-us/azure/templates/Microsoft.ServiceFabric/clusters/applications?pivots=deployment-language-arm-template
+//      Managed: https://learn.microsoft.com/en-us/azure/templates/microsoft.servicefabric/managedclusters/applications?pivots=deployment-language-arm-template
 
 internal class Program
 {
     public const string apiVersion = "2023-03-01-preview";
+
     private static void Main(string[] args)
     {
         while (true)
         {
             // Accept user input
-            Console.Write("Please provide file path: ");
+            Console.Write("Please provide input file path: ");
             string? inputFilePath = Console.ReadLine();
 
             if (inputFilePath == null || inputFilePath == "")
@@ -32,83 +39,121 @@ internal class Program
 
             if (appClassic == null)
             {
-                throw new Exception("Issue deserializing json input, please ensure it is formatted properly, then try again");
+                    throw new Exception("Issue deserializing json input, please ensure it is formatted properly, then try again");
             }
 
             appManaged.Add("type", "Microsoft.ServiceFabric/managedclusters/applications");
             appManaged.Add("apiVersion", apiVersion);
-            appManaged.Add("name", appClassic["name"]);
-            appManaged.Add("location", appClassic["location"]);
-            appManaged.Add("tags", appClassic["tags"]);
-            appManaged.Add("identity", appClassic["identity"]);
-
-            /// App properties conversion
-            var serializedProperties = JsonConvert.SerializeObject(appClassic["properties"]);
-            var propertiesClassic = JsonConvert.DeserializeObject<Dictionary<string, object>>(serializedProperties);
-            var propertiesManaged = new Dictionary<string, object>();
-
-            if (propertiesClassic == null)
-            {
-                throw new Exception("Expected non-empty properties");
-            }
-
-            propertiesManaged.Add("managedIdentities", propertiesClassic["managedIdentities"]);
-            propertiesManaged.Add("parameters", propertiesClassic["parameters"]);
-            propertiesManaged.Add("version", propertiesClassic["typeVersion"]);
+            appManaged.Add("name", TryGetValue(appClassic, "name"));
+            appManaged.Add("location", TryGetValue(appClassic, "location"));
+            appManaged.Add("dependsOn", TryGetValue(appClassic, "dependsOn"));
+            appManaged.Add("tags", TryGetValue(appClassic, "tags"));
+            appManaged.Add("identity", TryGetValue(appClassic, "identity"));
 
             var removedProperties = new List<string>();
-            if (propertiesClassic.ContainsKey("maximumNodes"))
+           
+            /// App properties conversion
+            if (appClassic.ContainsKey("properties"))
             {
-                removedProperties.Add("maximumNodes");
-            }
-            if (propertiesClassic.ContainsKey("minimumNodes"))
-            {
-                removedProperties.Add("minimumNodes");
-            }
-            if (propertiesClassic.ContainsKey("metrics"))
-            {
-                removedProperties.Add("metrics");
-            }
-            if (propertiesClassic.ContainsKey("removeApplicationCapacity"))
-            {
-                removedProperties.Add("removeApplicationCapacity");
-            }
-            if (propertiesClassic.ContainsKey("typeName"))
-            {
-                removedProperties.Add("typeName");
-            }
+                var serializedProperties = JsonConvert.SerializeObject(appClassic["properties"]);
+                var propertiesClassic = JsonConvert.DeserializeObject<Dictionary<string, object>>(serializedProperties) ?? throw new Exception("\"properties\" could not be deserialized!");
+                var propertiesManaged = new Dictionary<string, object>();
 
-            /// App Upgrade Policy Conversion
-            var serializedUpgradePolicyClassic = JsonConvert.SerializeObject(propertiesClassic["upgradePolicy"]);
-            var upgradePolicyClassic = JsonConvert.DeserializeObject<Dictionary<string, object>>(serializedUpgradePolicyClassic);
-            var upgradePolicyManaged = new Dictionary<string, object>();
+                propertiesManaged.Add("managedIdentities", TryGetValue(propertiesClassic, "managedIdentities"));
+                propertiesManaged.Add("parameters", TryGetValue(propertiesClassic, "parameters"));
 
-            if (upgradePolicyClassic == null)
-            {
-                throw new Exception("Expected valid upgradePolicy");
-            };
+                var typeName = TryGetValue(propertiesClassic, "typeVersion");
+                var typeVersion = TryGetValue(propertiesClassic, "typeName");
+                string version = null;
 
-            upgradePolicyManaged.Add("forceRestart", upgradePolicyClassic["forceRestart"]);
-            upgradePolicyManaged.Add("recreateApplication", upgradePolicyClassic["recreateApplication"]);
-            upgradePolicyManaged.Add("upgradeReplicaSetCheckTimeout", upgradePolicyClassic["upgradeReplicaSetCheckTimeout"]);
-            upgradePolicyManaged.Add("rollingUpgradeMonitoringPolicy", upgradePolicyClassic["rollingUpgradeMonitoringPolicy"]);
-            upgradePolicyManaged.Add("applicationHealthPolicy", upgradePolicyClassic["applicationHealthPolicy"]);
+                if (typeName != null && typeVersion != null)
+                {
+                    version = $"[resourceId(resourcegroup().name, 'Microsoft.ServiceFabric/managedClusters/applicationTypes/versions', parameters('clusterName'), '{typeName}', '{typeVersion}')";
+                }
+                else
+                {
+                    if (typeName == null) removedProperties.Add("typeName");
+                    if (typeVersion == null) removedProperties.Add("typeVersion");
+                }
+                propertiesManaged.Add("version", version);
 
-            if (upgradePolicyClassic["upgradeMode"] == "Monitored" ||
-                upgradePolicyClassic["upgradeMode"] == "UnmonitoredAuto")
-            {
-                upgradePolicyManaged.Add("upgradeMode", upgradePolicyClassic["upgradeMode"]);
+                if (propertiesClassic.ContainsKey("upgradePolicy"))
+                {
+                    /// App Upgrade Policy Conversion
+                    var serializedUpgradePolicyClassic = JsonConvert.SerializeObject(propertiesClassic["upgradePolicy"]);
+                    var upgradePolicyClassic = JsonConvert.DeserializeObject<Dictionary<string, object>>(serializedUpgradePolicyClassic) ?? throw new Exception("\"upgradePolicy\" could not be deserialized!");
+                    var upgradePolicyManaged = new Dictionary<string, object>();
+
+                    upgradePolicyManaged.Add("forceRestart", TryGetValue(upgradePolicyClassic, "forceRestart"));
+                    upgradePolicyManaged.Add("recreateApplication", TryGetValue(upgradePolicyClassic, "recreateApplication"));
+                    upgradePolicyManaged.Add("rollingUpgradeMonitoringPolicy", TryGetValue(upgradePolicyClassic, "rollingUpgradeMonitoringPolicy"));
+                    upgradePolicyManaged.Add("applicationHealthPolicy", TryGetValue(upgradePolicyClassic, "applicationHealthPolicy"));
+
+                    var upgradeMode = TryGetValue(upgradePolicyClassic, "upgradeMode");
+                    if (upgradeMode == null ||
+                        upgradeMode == "Monitored" ||
+                        upgradeMode == "UnmonitoredAuto")
+                    {
+                        upgradePolicyManaged.Add("upgradeMode", upgradeMode);
+                    }
+                    else
+                    {
+                        throw new Exception($"Valid upgradeMode is required for upgradePolicy! Provided upgradeMode: {upgradeMode}");
+                    }
+
+                    var upgradeReplicaSetCheckTimeout = (string)TryGetValue(upgradePolicyClassic, "upgradeReplicaSetCheckTimeout");
+                    if (upgradeReplicaSetCheckTimeout != null)
+                    {
+                        var timespan = TimeSpan.Parse(upgradeReplicaSetCheckTimeout);
+                        upgradePolicyManaged.Add("upgradeReplicaSetCheckTimeout", (uint)timespan.TotalSeconds);
+                    }
+
+                    propertiesManaged.Add("upgradePolicy", RemoveNullEntries(upgradePolicyManaged));
+                };
+
+                if (propertiesClassic.ContainsKey("maximumNodes"))
+                {
+                    removedProperties.Add("maximumNodes");
+                }
+                if (propertiesClassic.ContainsKey("minimumNodes"))
+                {
+                    removedProperties.Add("minimumNodes");
+                }
+                if (propertiesClassic.ContainsKey("metrics"))
+                {
+                    removedProperties.Add("metrics");
+                }
+                if (propertiesClassic.ContainsKey("removeApplicationCapacity"))
+                {
+                    removedProperties.Add("removeApplicationCapacity");
+                }
+
+                appManaged.Add("properties", RemoveNullEntries(propertiesManaged));
             }
             else
             {
-                upgradePolicyManaged.Add("upgradeMode", "Monitored");
+                appManaged.Add("properties", new JObject());
             }
 
-            propertiesManaged.Add("upgradePolicy", upgradePolicyManaged);
-            appManaged.Add("properties", propertiesManaged);
-
-            var results = JsonConvert.SerializeObject(appManaged, Formatting.Indented);
+            appManaged = RemoveNullEntries(appManaged);
+            var results = JsonConvert.SerializeObject(appManaged, Formatting.Indented, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
             // Return result / write to new file
+            for (int i = 0; i < 10; i++) 
+            {
+                Console.Write(". ");
+            }
+            Console.WriteLine("Ready!");
+
+            Console.Write("Please provide destination file path: ");
+            var dest = Console.ReadLine();
+            if (dest == null)
+            {
+                throw new Exception("No destination provided!");
+            }
+
+            dest = dest.Replace("\"", "");
+            File.WriteAllText(dest, results);
+
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine(results);
             Console.WriteLine("\n");
@@ -121,9 +166,23 @@ internal class Program
 
             // Ask user if they want to convert another file
             Console.Write("Convert another file? [Y] Yes [N] No [Default] No: ");
-            var continueFlag = Console.ReadLine();
+            var continueFlag = Console.ReadLine() ?? throw new Exception("No input provided! Quitting program...");
 
-            if (continueFlag != "Y") break;
+            if (continueFlag.ToLower() != "y") break;
         }
+    }
+
+    private static object TryGetValue(Dictionary<string, object> dictionary, string key)
+    {
+        if (dictionary.ContainsKey(key))
+        {
+            return dictionary[key];
+        }
+        return null;
+    }
+
+    private static Dictionary<string, object> RemoveNullEntries (Dictionary<string, object> dictionary)
+    {
+        return dictionary.Where(d => d.Value != null).ToDictionary(k => k.Key, v => v.Value);
     }
 }
