@@ -32,7 +32,7 @@ internal class Program
             inputFilePath = inputFilePath.Replace("\"", "");
             string fileContents = File.ReadAllText(inputFilePath);
 
-            // Convert to MC App Resource
+            // Convert to MC App Resource, all matching resources are attempted to be transitioned to MC model. Null resources will be removed at end.
             /// App top level conversion
             var appClassic = JsonConvert.DeserializeObject<Dictionary<string, object>>(fileContents);
             var appManaged = new Dictionary<string, object>();
@@ -52,7 +52,7 @@ internal class Program
 
             var removedProperties = new List<string>();
            
-            /// App properties conversion
+            /// App Properties conversion
             if (appClassic.ContainsKey("properties"))
             {
                 var serializedProperties = JsonConvert.SerializeObject(appClassic["properties"]);
@@ -69,25 +69,26 @@ internal class Program
                 if (typeName != null && typeVersion != null)
                 {
                     version = $"[resourceId(resourcegroup().name, 'Microsoft.ServiceFabric/managedClusters/applicationTypes/versions', parameters('clusterName'), '{typeName}', '{typeVersion}')";
+                    propertiesManaged.Add("version", version);
                 }
                 else
                 {
                     if (typeName == null) removedProperties.Add("typeName");
                     if (typeVersion == null) removedProperties.Add("typeVersion");
                 }
-                propertiesManaged.Add("version", version);
 
                 if (propertiesClassic.ContainsKey("upgradePolicy"))
                 {
                     /// App Upgrade Policy Conversion
                     var serializedUpgradePolicyClassic = JsonConvert.SerializeObject(propertiesClassic["upgradePolicy"]);
                     var upgradePolicyClassic = JsonConvert.DeserializeObject<Dictionary<string, object>>(serializedUpgradePolicyClassic) ?? throw new Exception("\"upgradePolicy\" could not be deserialized!");
-                    var upgradePolicyManaged = new Dictionary<string, object>();
-
-                    upgradePolicyManaged.Add("forceRestart", TryGetValue(upgradePolicyClassic, "forceRestart"));
-                    upgradePolicyManaged.Add("recreateApplication", TryGetValue(upgradePolicyClassic, "recreateApplication"));
-                    upgradePolicyManaged.Add("rollingUpgradeMonitoringPolicy", TryGetValue(upgradePolicyClassic, "rollingUpgradeMonitoringPolicy"));
-                    upgradePolicyManaged.Add("applicationHealthPolicy", TryGetValue(upgradePolicyClassic, "applicationHealthPolicy"));
+                    var upgradePolicyManaged = new Dictionary<string, object>
+                    {
+                        { "forceRestart", TryGetValue(upgradePolicyClassic, "forceRestart") },
+                        { "recreateApplication", TryGetValue(upgradePolicyClassic, "recreateApplication") },
+                        { "rollingUpgradeMonitoringPolicy", TryGetValue(upgradePolicyClassic, "rollingUpgradeMonitoringPolicy") },
+                        { "applicationHealthPolicy", TryGetValue(upgradePolicyClassic, "applicationHealthPolicy") }
+                    };
 
                     var upgradeMode = TryGetValue(upgradePolicyClassic, "upgradeMode");
                     if (upgradeMode == null ||
